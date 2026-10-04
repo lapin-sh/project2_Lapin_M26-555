@@ -1,18 +1,18 @@
 """Основная логика работы с таблицами и данными."""
 
 from primitive_db.constants import VALID_TYPES
+from primitive_db.decorators import confirm_action, handle_db_errors, log_time
 from primitive_db.parser import convert_value
 
 
+@handle_db_errors
 def create_table(metadata, table_name, columns):
     """Создает таблицу со столбцом ID и возвращает обновленные метаданные."""
     if table_name in metadata:
-        print(f'Ошибка: Таблица "{table_name}" уже существует.')
-        return None
+        raise ValueError(f'Таблица "{table_name}" уже существует.')
     for name, type_name in columns:
         if type_name not in VALID_TYPES:
-            print(f"Некорректное значение: {name}:{type_name}. Попробуйте снова.")
-            return None
+            raise TypeError(f"{name}:{type_name}")
     if not any(name == "ID" for name, _ in columns):
         columns = [("ID", "int")] + list(columns)
     metadata[table_name] = columns
@@ -21,11 +21,12 @@ def create_table(metadata, table_name, columns):
     return metadata
 
 
+@handle_db_errors
+@confirm_action("удаление таблицы")
 def drop_table(metadata, table_name):
     """Удаляет таблицу из метаданных и возвращает их."""
     if table_name not in metadata:
-        print(f'Ошибка: Таблица "{table_name}" не существует.')
-        return None
+        raise ValueError(f'Таблица "{table_name}" не существует.')
     del metadata[table_name]
     print(f'Таблица "{table_name}" успешно удалена.')
     return metadata
@@ -34,8 +35,7 @@ def drop_table(metadata, table_name):
 def get_table_columns(metadata, table_name):
     """Возвращает схему таблицы, если она существует."""
     if table_name not in metadata:
-        print(f'Ошибка: Таблица "{table_name}" не существует.')
-        return None
+        raise ValueError(f'Таблица "{table_name}" не существует.')
     return metadata[table_name]
 
 
@@ -54,29 +54,27 @@ def matches(row, where_clause):
     return True
 
 
+@handle_db_errors
+@log_time
 def insert(metadata, table_name, table_data, raw_values):
     """Добавляет запись в таблицу и возвращает обновленные данные."""
     columns = get_table_columns(metadata, table_name)
-    if columns is None:
-        return None
     if len(raw_values) != len(columns) - 1:
-        print(f"Некорректное значение: {', '.join(raw_values)}. Попробуйте снова.")
-        return None
+        raise TypeError(", ".join(raw_values))
     record = {"ID": generate_id(table_data)}
     index = 0
     for name, type_name in columns:
         if name == "ID":
             continue
-        value = convert_value(raw_values[index], type_name)
-        if value is None:
-            return None
-        record[name] = value
+        record[name] = convert_value(raw_values[index], type_name)
         index += 1
     table_data.append(record)
     print(f'Запись с ID={record["ID"]} успешно добавлена в таблицу "{table_name}".')
     return table_data
 
 
+@handle_db_errors
+@log_time
 def select(table_data, where_clause=None):
     """Возвращает записи таблицы по условию."""
     if where_clause is None:
@@ -88,6 +86,7 @@ def select(table_data, where_clause=None):
     return rows
 
 
+@handle_db_errors
 def update(table_name, table_data, set_clause, where_clause):
     """Обновляет записи по условию и возвращает измененные данные."""
     for row in table_data:
@@ -100,12 +99,16 @@ def update(table_name, table_data, set_clause, where_clause):
     return table_data
 
 
+@handle_db_errors
+@confirm_action("удаление записи")
 def delete(table_name, table_data, where_clause):
     """Удаляет записи по условию и возвращает обновленные данные."""
     remaining = []
     for row in table_data:
         if matches(row, where_clause):
-            print(f'Запись с ID={row["ID"]} успешно удалена из таблицы "{table_name}".')
+            record_id = row["ID"]
+            print(f'Запись с ID={record_id} '
+                  f'успешно удалена из таблицы "{table_name}".')
         else:
             remaining.append(row)
     return remaining

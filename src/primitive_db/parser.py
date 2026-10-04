@@ -1,4 +1,4 @@
-"""Разбор сложных частей команд: значения и условия where и set."""
+"""Разбор аргументов команд: столбцы, значения и условия where и set."""
 
 
 def convert_value(raw_value, type_name):
@@ -7,33 +7,39 @@ def convert_value(raw_value, type_name):
         try:
             return int(raw_value)
         except ValueError:
-            print(f"Некорректное значение: {raw_value}. Попробуйте снова.")
-            return None
+            raise TypeError(raw_value) from None
     if type_name == "bool":
         if raw_value == "true":
             return True
         if raw_value == "false":
             return False
-        print(f"Некорректное значение: {raw_value}. Попробуйте снова.")
-        return None
+        raise TypeError(raw_value)
     if len(raw_value) > 1 and raw_value[0] == raw_value[-1] and raw_value[0] in "\"'":
         return raw_value[1:-1]
-    print(f"Некорректное значение: {raw_value}. Попробуйте снова.")
-    return None
+    raise TypeError(raw_value)
+
+
+def parse_columns(args):
+    """Разбирает аргументы вида имя:тип в список пар."""
+    columns = []
+    for arg in args:
+        name, _, type_name = arg.partition(":")
+        if not name or not type_name:
+            raise TypeError(arg)
+        columns.append((name, type_name))
+    return columns
 
 
 def parse_values(raw):
     """Разбирает часть values: (значение1, значение2, ...) в список строк."""
     raw = raw.strip()
     if not (raw.startswith("(") and raw.endswith(")")):
-        print(f"Некорректное значение: {raw}. Попробуйте снова.")
-        return None
+        raise TypeError(raw)
     values = []
     for part in raw[1:-1].split(","):
         part = part.strip()
         if not part:
-            print(f"Некорректное значение: {raw}. Попробуйте снова.")
-            return None
+            raise TypeError(raw)
         values.append(part)
     return values
 
@@ -44,13 +50,8 @@ def parse_condition(raw, columns):
     column = column.strip()
     raw_value = raw_value.strip()
     if not sep or not column or not raw_value:
-        print(f"Некорректное значение: {raw}. Попробуйте снова.")
-        return None
+        raise TypeError(raw)
     schema = dict(columns)
     if column not in schema:
-        print(f"Ошибка: Таблица или столбец {column} не найден.")
-        return None
-    value = convert_value(raw_value, schema[column])
-    if value is None:
-        return None
-    return {column: value}
+        raise KeyError(column)
+    return {column: convert_value(raw_value, schema[column])}

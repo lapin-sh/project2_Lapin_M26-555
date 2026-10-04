@@ -14,7 +14,8 @@ from primitive_db.core import (
     select,
     update,
 )
-from primitive_db.parser import parse_condition, parse_values
+from primitive_db.decorators import create_cacher, handle_db_errors
+from primitive_db.parser import parse_columns, parse_condition, parse_values
 from primitive_db.utils import (
     load_metadata,
     load_table_data,
@@ -23,23 +24,19 @@ from primitive_db.utils import (
     save_table_data,
 )
 
+cacher = create_cacher()
+
+
+def reset_cache():
+    """Сбрасывает кэш запросов после изменения данных."""
+    global cacher
+    cacher = create_cacher()
+
 
 def print_help():
     """Печатает справку по командам."""
     for line in HELP_LINES:
         print(line)
-
-
-def parse_columns(args):
-    """Разбирает аргументы вида имя:тип в список пар."""
-    columns = []
-    for arg in args:
-        name, _, type_name = arg.partition(":")
-        if not name or not type_name:
-            print(f"Некорректное значение: {arg}. Попробуйте снова.")
-            return None
-        columns.append((name, type_name))
-    return columns
 
 
 def print_table(columns, rows):
@@ -59,12 +56,11 @@ def handle_create_table(args):
         print(f"Некорректное значение: {' '.join(args)}. Попробуйте снова.")
         return
     columns = parse_columns(args[1:])
-    if columns is None:
-        return
     metadata = load_metadata(META_FILE)
     result = create_table(metadata, args[0], columns)
     if result is not None:
         save_metadata(META_FILE, result)
+        reset_cache()
 
 
 def handle_drop_table(args):
@@ -77,6 +73,7 @@ def handle_drop_table(args):
     if result is not None:
         save_metadata(META_FILE, result)
         remove_table_data(args[0])
+        reset_cache()
 
 
 def handle_list_tables():
@@ -98,95 +95,83 @@ def handle_insert(user_input):
         return
     table_name = header[2]
     raw_values = parse_values(parts[1])
-    if raw_values is None:
-        return
     metadata = load_metadata(META_FILE)
     data = load_table_data(table_name)
     result = insert(metadata, table_name, data, raw_values)
     if result is not None:
         save_table_data(table_name, result)
+        reset_cache()
 
 
+@handle_db_errors
 def handle_select(user_input):
     """Обрабатывает команду select from."""
     parts = user_input.split(" where ", 1)
     header = parts[0].split()
     if len(header) != 3 or header[1] != "from":
-        print(f"Некорректное значение: {user_input}. Попробуйте снова.")
-        return
+        raise TypeError(user_input)
     table_name = header[2]
     metadata = load_metadata(META_FILE)
     columns = get_table_columns(metadata, table_name)
-    if columns is None:
-        return
     where_clause = None
     if len(parts) == 2:
         where_clause = parse_condition(parts[1], columns)
-        if where_clause is None:
-            return
     data = load_table_data(table_name)
-    rows = select(data, where_clause)
+    cache_key = (table_name, str(where_clause))
+    rows = cacher(cache_key, lambda: select(data, where_clause))
     print_table(columns, rows)
 
 
+@handle_db_errors
 def handle_update(user_input):
     """Обрабатывает команду update."""
     parts = user_input.split(" set ", 1)
     if len(parts) != 2:
-        print(f"Некорректное значение: {user_input}. Попробуйте снова.")
-        return
+        raise TypeError(user_input)
     header = parts[0].split()
     if len(header) != 2:
-        print(f"Некорректное значение: {user_input}. Попробуйте снова.")
-        return
+        raise TypeError(user_input)
     table_name = header[1]
     set_raw, _, where_raw = parts[1].partition(" where ")
     if not where_raw:
-        print(f"Некорректное значение: {user_input}. Попробуйте снова.")
-        return
+        raise TypeError(user_input)
     metadata = load_metadata(META_FILE)
     columns = get_table_columns(metadata, table_name)
-    if columns is None:
-        return
     set_clause = parse_condition(set_raw, columns)
     where_clause = parse_condition(where_raw, columns)
-    if set_clause is None or where_clause is None:
-        return
     data = load_table_data(table_name)
     result = update(table_name, data, set_clause, where_clause)
-    save_table_data(table_name, result)
+    if result is not None:
+        save_table_data(table_name, result)
+        reset_cache()
 
 
+@handle_db_errors
 def handle_delete(user_input):
     """Обрабатывает команду delete from."""
     parts = user_input.split(" where ", 1)
     header = parts[0].split()
     if len(parts) != 2 or len(header) != 3 or header[1] != "from":
-        print(f"Некорректное значение: {user_input}. Попробуйте снова.")
-        return
+        raise TypeError(user_input)
     table_name = header[2]
     metadata = load_metadata(META_FILE)
     columns = get_table_columns(metadata, table_name)
-    if columns is None:
-        return
     where_clause = parse_condition(parts[1], columns)
-    if where_clause is None:
-        return
     data = load_table_data(table_name)
     result = delete(table_name, data, where_clause)
-    save_table_data(table_name, result)
+    if result is not None:
+        save_table_data(table_name, result)
+        reset_cache()
 
 
+@handle_db_errors
 def handle_info(args):
     """Обрабатывает команду info."""
     if len(args) != 1:
-        print(f"Некорректное значение: {' '.join(args)}. Попробуйте снова.")
-        return
+        raise TypeError(" ".join(args))
     table_name = args[0]
     metadata = load_metadata(META_FILE)
     columns = get_table_columns(metadata, table_name)
-    if columns is None:
-        return
     data = load_table_data(table_name)
     columns_line = ", ".join(f"{name}:{type_name}" for name, type_name in columns)
     print(f"Таблица: {table_name}")
